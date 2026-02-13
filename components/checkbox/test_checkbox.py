@@ -9,7 +9,11 @@ from components.checkbox.checkbox import CheckboxComponent
 from framework.base import StorybookControlsManager
 from utils.logger import logger
 
-STORY_PATH = "main-checkbox--default"
+story_path = "main-checkbox--default"
+
+CHECKBOX_VARIANTS = ["unchecked", "checked"]
+CHECKBOX_STATES = ["active", "hover", "disabled", "focus"]
+THEME_MODES = ("light", "light-hc", "dark", "dark-hc")
 
 
 @pytest.mark.property
@@ -20,26 +24,21 @@ class TestCheckboxComponent:
     def checkbox(self, page):
         """Fixture to create CheckboxComponent and navigate to story once"""
         checkbox = CheckboxComponent(page)
-        checkbox.navigate_to_story(STORY_PATH, wait_for_selector=None)
+        checkbox.navigate_to_story(story_path, wait_for_selector=None)
         page.wait_for_selector("iframe", timeout=10000)
         try:
             checkbox.wait_for_component_ready(checkbox.locators.CHECKBOX, timeout=10000)
         except Exception:
-            checkbox.wait_for_component_ready(checkbox.locators.CHECKBOX_BY_ROLE, timeout=5000)
+            try:
+                checkbox.wait_for_component_ready(checkbox.locators.CHECKBOX_ICON, timeout=5000)
+            except Exception:
+                checkbox.wait_for_component_ready(checkbox.locators.CHECKBOX_BY_ROLE, timeout=5000)
         return checkbox
 
     @pytest.fixture(scope="class")
     def controls_manager(self, page):
         """Fixture for StorybookControlsManager"""
         return StorybookControlsManager(page)
-
-    @pytest.fixture(scope="class", autouse=True)
-    def setup_class_fixtures(self, checkbox, controls_manager):
-        """Store fixtures as instance attributes"""
-        self._checkbox = checkbox
-        self._story_path = STORY_PATH
-        self._controls_manager = controls_manager
-        yield
 
     def test_checkbox_click(self):
         """Test clicking a checkbox toggles state"""
@@ -84,10 +83,10 @@ class TestCheckboxComponent:
         checkbox.wait_for_animation(0.3)
 
     def test_checkbox_properties(self):
-        """Test checkbox CSS properties (excluding CSS variables)"""
+        """Test checkbox icon CSS properties (excluding CSS variables)"""
         checkbox = self._checkbox
-        checkbox.verify_component_properties(selector=checkbox.locators.CHECKBOX)
-        logger.info("✅ Checkbox regular properties verified")
+        checkbox.verify_component_properties(selector=checkbox.locators.CHECKBOX_ICON)
+        logger.info("✅ Checkbox icon properties verified")
 
     def test_checkbox_css_variables(self):
         """Verify :root CSS variables match css-variables.properties (if story exposes theme)"""
@@ -105,7 +104,7 @@ class TestCheckboxComponent:
         else:
             # Label may be in wrapper; try to get text near checkbox
             frame = checkbox.get_iframe_frame_locator()
-            text = frame.locator(checkbox.locators.CHECKBOX).locator("xpath=..").first.inner_text()
+            text = frame.locator(checkbox.locators.CHECKBOX_LABEL).first.inner_text()
             if text:
                 logger.info(f"✅ Checkbox context text: {text.strip()[:50]}")
 
@@ -180,3 +179,107 @@ class TestCheckboxComponent:
         reset_values = controls_manager.get_all_control_values(story_path)
         assert reset_values is not None
         logger.info("✅ Controls reset to defaults")
+
+    @pytest.mark.parametrize("variant", CHECKBOX_VARIANTS)
+    @pytest.mark.parametrize("state", CHECKBOX_STATES)
+    @pytest.mark.parametrize("theme", THEME_MODES)
+    def test_checkbox_variant_properties(
+        self, checkbox, controls_manager, variant: str, state: str, theme: str
+    ):
+        """Set Storybook controls for variant/state; navigate with theme; verify icon, label, and container CSS properties and declared color styles."""
+        checkbox.navigate_to_story(
+            story_path, theme_mode=theme, wait_for_selector=checkbox.locators.CHECKBOX
+        )
+        checkbox.page.wait_for_selector("iframe", timeout=10000)
+        checkbox.wait_for_component_ready(checkbox.locators.CHECKBOX, timeout=10000)
+
+        controls = {
+            "checked": variant == "checked",
+            "disabled": state == "disabled",
+        }
+        controls_manager.update_multiple_controls(story_path, controls, checkbox.locators.CHECKBOX)
+
+        expected_icon = checkbox.load_checkbox_icon_properties(variant, state)
+        if not expected_icon:
+            pytest.skip(
+                f"No expected icon properties for variant={variant}, state={state} in checkbox.properties"
+            )
+
+        expected_label = checkbox.load_checkbox_label_properties(variant, state)
+        expected_container = checkbox.load_checkbox_container_properties()
+        expected_icon_colors = checkbox.load_checkbox_icon_color_properties(variant, state)
+        expected_label_colors = checkbox.load_checkbox_label_color_properties(variant, state)
+
+        def declared_matches(expected_val: str, actual: str) -> bool:
+            e, a = expected_val.strip(), actual.strip()
+            if e == a:
+                return True
+            if e.startswith("var(--") and a.startswith("var(--"):
+                evar = e.rstrip(")").rstrip()
+                if a == evar + ")" or a.startswith(evar + ","):
+                    return True
+            if e == "rgb(0, 0, 0)" and a == "rgba(0, 0, 0, 0)":
+                return True
+            if a == "rgb(0, 0, 0)" and e == "rgba(0, 0, 0, 0)":
+                return True
+            return False
+
+        def assert_declared_colors(selector: str, expected_colors: dict, part: str):
+            if not expected_colors:
+                return
+            mismatches = []
+            for prop_name, expected_value in expected_colors.items():
+                actual_declared = checkbox.get_declared_style(selector, prop_name)
+                if not declared_matches(expected_value, actual_declared):
+                    mismatches.append(
+                        f"{part} {prop_name}: expected {expected_value!r}, got {actual_declared!r}"
+                    )
+            if mismatches:
+                raise AssertionError(
+                    "Found %s declared color mismatch(es) (%s.%s):\n  - %s"
+                    % (len(mismatches), variant, state, "\n  - ".join(mismatches))
+                )
+
+        def verify_all():
+            checkbox.verify_component_properties(
+                properties=expected_icon, selector=checkbox.locators.CHECKBOX_ICON
+            )
+            if expected_icon_colors:
+                assert_declared_colors(
+                    checkbox.locators.CHECKBOX_ICON, expected_icon_colors, "icon"
+                )
+            if expected_label:
+                checkbox.verify_component_properties(
+                    properties=expected_label, selector=checkbox.locators.CHECKBOX_LABEL
+                )
+            if expected_label_colors:
+                assert_declared_colors(
+                    checkbox.locators.CHECKBOX_LABEL, expected_label_colors, "label"
+                )
+            if expected_container:
+                checkbox.verify_component_properties(
+                    properties=expected_container, selector=checkbox.locators.CHECKBOX
+                )
+
+        if state == "hover":
+            checkbox.hover_checkbox()
+            verify_all()
+        elif state == "focus":
+            checkbox.get_checkbox().focus()
+            checkbox.wait_for_animation(0.2)
+            verify_all()
+        else:
+            verify_all()
+
+        total = len(expected_icon) + len(expected_label) + len(expected_container)
+        logger.info(
+            "✅ Verified checkbox icon+label+container %s %s %s: %s properties (icon=%s, label=%s, container=%s)%s",
+            variant,
+            state,
+            theme,
+            total,
+            len(expected_icon),
+            len(expected_label),
+            len(expected_container),
+            f", icon colors: {list(expected_icon_colors.keys())}" if expected_icon_colors else "",
+        )

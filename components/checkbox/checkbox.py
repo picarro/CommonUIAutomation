@@ -2,7 +2,7 @@
 Checkbox component class with all Checkbox-specific functions
 """
 from playwright.sync_api import Page, Locator
-from typing import Optional
+from typing import Dict, Optional
 from framework.base import PropertyChecker
 from components.checkbox.locators import CheckboxLocators
 
@@ -18,8 +18,8 @@ class CheckboxComponent(PropertyChecker):
         self.locators = CheckboxLocators()
     
     def get_checkbox(self, selector: Optional[str] = None) -> Locator:
-        """Get checkbox locator inside iframe"""
-        return self.get_story_locator(selector or self.locators.CHECKBOX)
+        """Get checkbox icon (input) locator inside iframe. Use CHECKBOX_ICON by default."""
+        return self.get_story_locator(selector or self.locators.CHECKBOX_ICON)
     
     def click_checkbox(self, selector: Optional[str] = None):
         """Click checkbox to toggle state"""
@@ -77,6 +77,40 @@ class CheckboxComponent(PropertyChecker):
         checkbox.hover()
         self.wait_for_animation(0.3)
     
+    def load_checkbox_icon_properties(self, variant: str, state: str) -> Dict[str, str]:
+        """
+        Load expected CSS properties for the checkbox icon for a variant/state from checkbox.properties.
+        Keys in file: icon.<variant>.<state>.<css-property>
+        """
+        prefix = f"icon.{variant.lower()}.{state.lower()}."
+        return self.load_component_properties_by_prefix("checkbox", prefix)
+
+    def load_checkbox_icon_color_properties(self, variant: str, state: str) -> Dict[str, str]:
+        """Load only color-related properties for the checkbox icon (for declared style verification)."""
+        CHECKBOX_ICON_COLOR_PROPERTIES = ("background-color", "color", "border-color")
+        all_props = self.load_checkbox_icon_properties(variant, state)
+        return {k: v for k, v in all_props.items() if k in CHECKBOX_ICON_COLOR_PROPERTIES}
+
+    def load_checkbox_label_properties(self, variant: str, state: str) -> Dict[str, str]:
+        """Load expected CSS properties for the checkbox label for a variant/state. Keys: label.<variant>.<state>.<css-property>."""
+        prefix = f"label.{variant.lower()}.{state.lower()}."
+        return self.load_component_properties_by_prefix("checkbox", prefix)
+
+    def load_checkbox_label_color_properties(self, variant: str, state: str) -> Dict[str, str]:
+        """Load only color-related properties for the label (for declared style verification)."""
+        color_props = ("color", "background-color", "border-color")
+        all_props = self.load_checkbox_label_properties(variant, state)
+        return {k: v for k, v in all_props.items() if k in color_props}
+
+    def load_checkbox_container_properties(self) -> Dict[str, str]:
+        """Load container (flat) properties from checkbox.properties. Keys have no icon./label. prefix."""
+        all_props = self.load_component_properties("checkbox")
+        return {
+            k: v
+            for k, v in all_props.items()
+            if not k.startswith("icon.") and not k.startswith("label.")
+        }
+
     def get_checkbox_label(self, selector: Optional[str] = None) -> Optional[str]:
         """Get checkbox label text"""
         checkbox = self.get_checkbox(selector)

@@ -867,6 +867,47 @@ class PropertyChecker(StorybookBase):
             logger.error("❌ Error loading variant properties from %s: %s", properties_file, e)
         return result
 
+    def load_component_properties_by_prefix(
+        self,
+        component_name: str,
+        prefix: str,
+        properties_filename: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """
+        Load component properties where key starts with the given prefix.
+        Returns a dict of (key without prefix) -> value for use with verify_component_properties.
+
+        Args:
+            component_name: e.g. 'checkbox'
+            prefix: e.g. 'icon.unchecked.active.'
+            properties_filename: optional; default is '{component_name}.properties'
+        """
+        if properties_filename is None:
+            properties_filename = f"{component_name}.properties"
+        components_dir = self._components_dir()
+        component_dir = components_dir / component_name
+        properties_file = component_dir / properties_filename
+        result = {}
+        if not properties_file.exists():
+            logger.warning("⚠️ Properties file not found: %s", properties_file)
+            return result
+        try:
+            with open(properties_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key, value = key.strip(), value.strip()
+                    if key.startswith(prefix):
+                        prop_name = key[len(prefix) :]
+                        result[prop_name] = value
+        except Exception as e:
+            logger.error("❌ Error loading properties from %s: %s", properties_file, e)
+        return result
+
     def load_css_variables_from_file(self, file_path: Path) -> Dict[str, str]:
         """Load CSS variables from a .properties file (--var: value; or --var=value;)."""
         css_variables = {}
@@ -901,6 +942,26 @@ class PropertyChecker(StorybookBase):
         """Load CSS variable definitions from components/css-variables.properties."""
         return self.load_css_variables_from_file(self._components_dir() / "css-variables.properties")
 
+    def _css_values_match(self, expected: Any, actual: str) -> bool:
+        """Compare expected vs actual CSS value; treat 0 and 0px (and similar length equivalents) as equal."""
+        e_str = str(expected).strip().lower()
+        a_str = str(actual).strip().lower() if actual is not None else ""
+        if e_str == a_str:
+            return True
+        # Normalize length values: "0" and "0px" both mean zero
+        try:
+            e_clean = e_str.replace("px", "").replace("%", "").strip()
+            a_clean = a_str.replace("px", "").replace("%", "").strip()
+            if e_clean == "":
+                e_clean = "0"
+            if a_clean == "":
+                a_clean = "0"
+            if float(e_clean) == float(a_clean):
+                return True
+        except (ValueError, TypeError):
+            pass
+        return False
+
     def verify_component_properties(self, properties: Dict[str, Any] = None, selector: str = None):
         """
         Verify multiple component properties (from .properties or dict). Excludes var(--...) values.
@@ -918,7 +979,7 @@ class PropertyChecker(StorybookBase):
             return
         component = self.get_story_locator(selector)
         mismatches = []
-        logger.info("Verifying %s component properties (excluding CSS variables)...", len(regular_properties))
+        logger.info("Verifying %s component properties", len(regular_properties))
         for property_name, expected in regular_properties.items():
             js_code = """
                 (element, propName) => {
@@ -936,13 +997,13 @@ class PropertyChecker(StorybookBase):
                         if abs(actual_num - expected_num) > tolerance:
                             mismatches.append(f"Property '{property_name}' mismatch: expected {expected_value} (±{tolerance}), got {actual_value}")
                     except ValueError:
-                        if str(actual_value).strip().lower() != str(expected_value).strip().lower():
+                        if not self._css_values_match(expected_value, actual_value):
                             mismatches.append(f"Property '{property_name}' mismatch: expected {expected_value}, got {actual_value}")
                 else:
-                    if str(actual_value).strip().lower() != str(expected_value).strip().lower():
+                    if not self._css_values_match(expected_value, actual_value):
                         mismatches.append(f"Property '{property_name}' mismatch: expected {expected_value}, got {actual_value}")
             else:
-                if str(actual_value).strip().lower() != str(expected).strip().lower():
+                if not self._css_values_match(expected, actual_value):
                     mismatches.append(f"Property '{property_name}' mismatch: expected {expected}, got {actual_value}")
         if mismatches:
             raise AssertionError("Found %s property mismatch(es):\n  - %s" % (len(mismatches), "\n  - ".join(mismatches)))

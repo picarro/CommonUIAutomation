@@ -8,7 +8,6 @@ class ButtonLocators:
     """Locators for Button component"""
 
     # data-testid from Storybook (main-button--primary): <button data-testid="button-primary">
-    BUTTON_TEST_ID = "button-primary"
     BUTTON = "#storybook-root [data-testid='button-primary']"
     BUTTON_BY_TESTID = "#storybook-root [data-testid='button-primary']"
 
